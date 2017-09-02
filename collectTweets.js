@@ -48,7 +48,7 @@ const influx = new Influx.InfluxDB({
  database: dbname,
  schema: [
    {
-     measurement: "tweets",
+     measurement: measure,
      fields: {
        tweetid: Influx.FieldType.INTEGER,
        relevance: Influx.FieldType.FLOAT,
@@ -75,7 +75,7 @@ influx.getDatabaseNames()
 function saveTweetToInflux(result) {
   influx.writePoints([
     {
-      measurement: "tweets",
+      measurement: measure,
       tags: {
         keywords: (result.tags.length > 0 ? result.tags.join(",") : [])
       },
@@ -93,7 +93,6 @@ function saveTweetToInflux(result) {
 }
 
 // now define all the rest of the plumbing
-
 
 // parse command line arguments
 const argv = require("yargs").argv;
@@ -144,8 +143,7 @@ var request = require("request");
 // include jsonpath for dynamic keyword source parsing
 var jp = require("jsonpath");
 
-
-// formally begin execution
+// begin execution
 
 // push initialization into the queue, but start at end of script after all other declarations (readability)
 q.push(async function () {
