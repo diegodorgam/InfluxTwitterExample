@@ -36,6 +36,65 @@ To learn about using Promises in Node.js, see: http://bit.ly/Node-Promises
 
 */
 
+/*
+*** InfluxDB configuration ***
+Set up InfluxDB schema of points insertions to InfluxDB; create DB if necessary
+*/
+const dbname = "twitter";
+const measure = "tweets";
+const Influx = require("influx");
+const influx = new Influx.InfluxDB({
+ host: "localhost",
+ database: dbname,
+ schema: [
+   {
+     measurement: "tweets",
+     fields: {
+       tweetid: Influx.FieldType.INTEGER,
+       relevance: Influx.FieldType.FLOAT,
+       user: Influx.FieldType.STRING,
+       volatile: Influx.FieldType.BOOLEAN,
+       raw: Influx.FieldType.STRING
+     },
+     tags: [
+       "keywords"
+     ]
+   }
+ ]
+});
+
+// create the database if it doesn't already exist (happens in parallel with initialization below)
+influx.getDatabaseNames()
+  .then(names => {
+    if (!names.includes(dbname)) {
+      return influx.createDatabase(dbname);
+    }
+  });
+
+// after processing, save Tweet result to InfluxDB directly
+function saveTweetToInflux(result) {
+  influx.writePoints([
+    {
+      measurement: "tweets",
+      tags: {
+        keywords: (result.tags.length > 0 ? result.tags.join(",") : [])
+      },
+      fields: {
+        tweetid: result.tweetid,
+        relevance: result.relevance,
+        user: result.user,
+        volatile: result.volatile,
+        raw: JSON.stringify(result)
+      },
+    }
+  ]).catch(err => {
+    console.error(`Error saving data to InfluxDB! ${err.stack}`);
+  });
+}
+
+// now define all the rest of the plumbing
+
+
 // parse command line arguments
 const argv = require("yargs").argv;
 
@@ -44,7 +103,7 @@ var queue = require("queue");
 var q = queue( { autostart: true });
 
 // confirm environmental variables
-if(!process.env.TWITTER_CONSUMER_KEY) { throw new Error("You must define your Twitter keys as system environment variables."); }
+if(!process.env.TWITTER_CONSUMER_KEY) { throw new Error("You must define your Twitter keys as system environment variables. See script header comments or README.rm for instructions."); }
 
 // simplify debug message toggle
 console.debug = function(args) { if (argv.debug) { console.log("[debug] " + args); } };
@@ -86,48 +145,12 @@ var request = require("request");
 var jp = require("jsonpath");
 
 
-
-
-/*
-*** InfluxDB configuration ***
-Set up InfluxDB schema of points insertions to InfluxDB; create DB if necessary
-*/
-const dbname = "twitter";
-const measure = "tweets";
-const Influx = require("influx");
-const influx = new Influx.InfluxDB({
- host: "localhost",
- database: dbname,
- schema: [
-   {
-     measurement: "tweets",
-     fields: {
-       tweetid: Influx.FieldType.INTEGER,
-       relevance: Influx.FieldType.FLOAT,
-       user: Influx.FieldType.STRING,
-       volatile: Influx.FieldType.BOOLEAN,
-       raw: Influx.FieldType.STRING
-     },
-     tags: [
-       "keywords"
-     ]
-   }
- ]
-});
-// create the database if it doesn't already exist (happens in parallel with initialization below)
-q.push(function() {
-  influx.getDatabaseNames()
-    .then(names => {
-      if (!names.includes(dbname)) {
-        return influx.createDatabase(dbname);
-      }
-    });
-});
+// formally begin execution
 
 // push initialization into the queue, but start at end of script after all other declarations (readability)
 q.push(async function () {
 
-  console.log("Initializing execution queue.");
+  console.debug("Initializing execution queue.");
 
   var ctx = { // runtime context (replacing shared golbal variables)
     // dynamic parameters
@@ -338,13 +361,15 @@ function beginProcessEvents(ctx) {
 
     // retry twitter stream up to 5 times
     promiseRetry(function (retry, number) { // https://www.npmjs.com/package/promise-retry
-        console.info('attempt number', number);
+        console.debug('Twitter connection attempt '+ number);
 
         return createTwitterStream(ctx)
           .catch(function(err) {
             console.log(err)
-            if(number <= 5) retry(err);
-            throw err
+            if(number <= 5)
+              retry(err);
+            else
+              throw err;
           });
     })
     .catch(err => {
@@ -376,8 +401,8 @@ async function createTwitterStream(ctx) {
             });
           }
         });
-        stream.on("error", function(error) {
-          console.error(error)
+        stream.on("error", function(err) {
+          console.error(err)
           reject(err);
         });
       });
@@ -420,7 +445,7 @@ function onTwitterEvent(event, ctx) {
   }
 }
 
-// once an event is deemed to contain a minimum relevance and keywords(tags), write to InfluxDB
+// once a Twitter event is deemed relevant via keywords(tags), write to InfluxDB
 function afterMatchFound(result, ctx) {
 
   if(ctx.friendlies.indexOf(result.user.toLowerCase()) > -1) {
@@ -430,26 +455,8 @@ function afterMatchFound(result, ctx) {
   if(result.tags.length > 0) { // result.relevance
     console.debug("Found relevant match" + (result.volatile ? " [VOLATILE]" : "") + ".");
     console.debug(result.tweetid + " ["+result.relevance+"]: " + JSON.stringify(result.tags));
-
     // send through to InfluxDB
-    influx.writePoints([
-      {
-        measurement: "tweets",
-        tags: {
-          keywords: (result.tags.length > 0 ? result.tags.join(",") : [])
-        },
-        fields: {
-          tweetid: result.tweetid,
-          relevance: result.relevance,
-          user: result.user,
-          volatile: result.volatile,
-          raw: JSON.stringify(result)
-        },
-      }
-    ]).catch(err => {
-      console.error(`Error saving data to InfluxDB! ${err.stack}`);
-    });
-
+    saveTweetToInflux(result)
   } else {
     console.debug("Event not found to be relevant.");
   }
