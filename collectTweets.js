@@ -6,15 +6,27 @@ To run:
   1. follow the InfluxData sandbox environment tutorial here:
     https://github.com/influxdata/sandbox
 
-  2. create your own Twitter keys, then set them as environment variables.
+  2. create your own API keys, then set them as environment variables.
+
+    For Twitter: create a new app called 'InfluxTwitter' at
+    https://apps.twitter.com/app/new
+
+    For Rosette: If you want sentiment analysis, sign up for a trial at
+    https://developer.rosette.com/
 
     On Mac, set them in ~/.bash_profile
 
-    On Windows, configure the run.bat file with your own Twitter/Rosette keys
+    export TWITTER_CONSUMER_KEY=
+    export TWITTER_CONSUMER_SECRET=
+    export TWITTER_ACCESS_TOKEN_KEY=
+    export TWITTER_ACCESS_TOKEN_SECRET=
+    export ROSETTE_API_KEY=
+
+    On Windows, configure the run.bat file
 
   3. install latest Node distro and run this script from the command line:
 
-    node collectTweets.js --keywordSourceWordPressBasePath "http://paulsbruce.io"
+    npm build && node collectTweets.js --keywordSourceWordPressBasePath "http://paulsbruce.io"
 
 
 For a great overview of InfluxData architecture, read this article:
