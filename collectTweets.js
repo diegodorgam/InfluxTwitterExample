@@ -214,6 +214,11 @@ q.push(async function () {
     }
   }
 
+  if((ctx.useTestData || ctx.cacheData) && !fs.existsSync(ctx.testDataDir)) {
+    fs.mkdirSync(ctx.testDataDir);
+  }
+
+
   await Promise.all([
     loadKeywords(ctx)
       .then((kwds) => {
@@ -294,9 +299,9 @@ async function extractKeywords(source) {
 async function loadFriendlies(ctx) {
   var friendlies = [];
   if(ctx.isConnected) { // collect a list of users to really pay attention to, based on my retweets (who i've trusted enough)
+    console.debug("Extracting friendlies from Twitter timeline...");
      friendlies = await client.get("statuses/user_timeline", { include_rts: true, count:200 })
       .then(function(tweets) {
-          console.debug("tweeets" + tweets.length);
           return tweets
             .filter(function(it) { return it.retweeted })
             .map(function(it) { return it.retweeted_status.user.screen_name.toLowerCase(); })
@@ -319,9 +324,6 @@ async function loadTestData(ctx) {
     console.debug("Loading test data from cached responses in file-system.");
     var dir = ctx.testDataDir;
     var files = [];
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir);
-    }
     file.recurseSync(dir, ["*.json"], function(filepath, relative, filename) {
       files.push(filename);
     });
@@ -355,15 +357,13 @@ function beginProcessEvents(ctx) {
 
   } else {
 
-    console.log("Listening to twitter user feed for new events.");
-
     // retry twitter stream up to 5 times
     promiseRetry(function (retry, number) { // https://www.npmjs.com/package/promise-retry
         console.debug('Twitter connection attempt '+ number);
 
         return createTwitterStream(ctx)
           .catch(function(err) {
-            console.log(err)
+            console.log('promiseRetry err ' + err)
             if(number <= 5)
               retry(err);
             else
@@ -374,8 +374,6 @@ function beginProcessEvents(ctx) {
       console.log('Epic failure to establish Twitter stream after multiple attempts.')
       throw err;
     });
-
-
   }
 }
 
@@ -383,7 +381,7 @@ async function createTwitterStream(ctx) {
   return new Promise(function(resolve, reject) {
     try {
       client.stream("user", { }, function(stream) { // https://www.npmjs.com/package/twitter
-        resolve(stream);
+        console.log("Listening to twitter user feed for new events.");
         stream.on("data", function(event) {
 
           q.push(function() {
@@ -393,18 +391,20 @@ async function createTwitterStream(ctx) {
           if(ctx.cacheData) {
             q.push(function() {
               var filePath = ctx.testDataDir+event.id_str+".json";
-              fs.writeFile(filePath, JSON.stringify(event), function(error) {
-                if(error) { console.error("Could not save file: " + filePath + "\n" + JSON.stringify(err)); }
+              fs.writeFile(filePath, JSON.stringify(event), function(err) {
+                if(err) { console.error("Could not save file: " + filePath + "\n" + JSON.stringify(err)); }
               });
             });
           }
         });
         stream.on("error", function(err) {
-          console.error(err)
+          console.error('stream::error '+JSON.stringify(err))
           reject(err);
         });
+        resolve(stream);
       });
     } catch(err) {
+      console.error('createTwitterStream::catch '+err)
       reject(err);
     }
   })
@@ -432,13 +432,23 @@ function onTwitterEvent(event, ctx) {
     "tags": [],
     "sentiment": null
   };
+  var bSentiment = false;
   if (matches && matches.length > 0) {
 
+      matches = matches.unique();
+
+      // default relevance to three or more keywords = 100%
+      result.relevance = Math.min(1.0, (matches.length / 3));
+
       result.tags.extend(matches); // add tags based on keywords that matched
+      result.tags = result.tags.unique();
+      bSentiment = (rste ? true : false);
 
-      if(rste) { q.push(function() { processSentiments(event, matches, result, ctx) }); }
-
-  } else {
+      if(bSentiment) {
+        q.push(function() { processSentiments(event, matches, result, ctx) });
+      }
+  }
+  if(!bSentiment) {
     q.push(function() { afterMatchFound(result, ctx); }); // after no match determination made
   }
 }
